@@ -5,6 +5,8 @@ VisualStudioVersion = 25.0.1706.7
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlobProcessor.API", "BlobProcessor.API\BlobProcessor.API.csproj", "{1965EBBE-AF30-40D7-A31D-1C544907A223}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlobProcessor", "BlobProcessor\BlobProcessor.csproj", "{D4D902DC-DD67-45C4-85B5-A5D10B7FCB67}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{1965EBBE-AF30-40D7-A31D-1C544907A223}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1965EBBE-AF30-40D7-A31D-1C544907A223}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1965EBBE-AF30-40D7-A31D-1C544907A223}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4D902DC-DD67-45C4-85B5-A5D10B7FCB67}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4D902DC-DD67-45C4-85B5-A5D10B7FCB67}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4D902DC-DD67-45C4-85B5-A5D10B7FCB67}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4D902DC-DD67-45C4-85B5-A5D10B7FCB67}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

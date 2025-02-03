@@ -11,11 +11,9 @@ namespace BlobProcessor.API
     public class Processor
     {
         private readonly ILogger _logger;
+        private readonly BlobProcessorService _blobProcessorService;
         private static readonly string _containerName = "filecontainer";
         private readonly string _connectionString = string.Empty;
-
-        private BlobServiceClient _blobServiceClient;
-        private BlobContainerClient _blobContainer;
 
         public Processor(ILoggerFactory loggerFactory)
         {
@@ -28,20 +26,14 @@ namespace BlobProcessor.API
                 _logger.LogError("Unable to get connection string");
             }
 
-            _blobServiceClient = new BlobServiceClient(_connectionString);
-            _blobContainer = _blobServiceClient.GetBlobContainerClient(_containerName);
-            _blobContainer.CreateIfNotExistsAsync();
+            _blobProcessorService = new BlobProcessorService(_connectionString, _containerName);
         }
 
         [Function("ListBlobs")]
         public async Task<HttpResponseData> ListBlobs(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "blobs")] HttpRequestData req)
         {
-            var blobs = new List<string>();
-            await foreach (var blobItem in _blobContainer.GetBlobsAsync())
-            {
-                blobs.Add(blobItem.Name);
-            }
+            var blobs = await _blobProcessorService.GetBlobsAsync();
 
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(blobs);
@@ -53,8 +45,7 @@ namespace BlobProcessor.API
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "blobs/{blobName}/exists")] HttpRequestData req,
         string blobName)
         {
-            var blobClient = _blobContainer.GetBlobClient(blobName);
-            bool exists = await blobClient.ExistsAsync();
+            bool exists = await _blobProcessorService.BlobExistsAsync(blobName);
 
             var response = req.CreateResponse(exists ? HttpStatusCode.OK : HttpStatusCode.NotFound);
             await response.WriteStringAsync(exists ? $"Blob {blobName} exists." : $"Blob {blobName} does not exist.");
@@ -68,9 +59,8 @@ namespace BlobProcessor.API
         {
             _logger.LogInformation($"Uploading blob: {blobName}");
 
-            var blobClient = _blobContainer.GetBlobClient(blobName);
             using var stream = req.Body;
-            await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = req.Headers.GetValues("content-type").FirstOrDefault() });
+            await _blobProcessorService.UploadBlobAsync(blobName, stream);
 
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteStringAsync($"Blob {blobName} uploaded successfully.");
@@ -84,20 +74,16 @@ namespace BlobProcessor.API
         {
             _logger.LogInformation($"Downloading blob: {blobName}");
 
-            var blobClient = _blobContainer.GetBlobClient(blobName);
-
-            if (!(await blobClient.ExistsAsync()))
+            if (!await _blobProcessorService.BlobExistsAsync(blobName))
             {
-                var notFoundResponse = req.CreateResponse(HttpStatusCode.NotFound);
-                await notFoundResponse.WriteStringAsync($"Blob {blobName} not found.");
-                return notFoundResponse;
+                return req.CreateResponse(HttpStatusCode.NotFound);
             }
 
-            var downloadResponse = await blobClient.DownloadAsync();
+            var downloadResponse = await _blobProcessorService.DownloadBlobAsync(blobName);
 
             var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", downloadResponse.Value.ContentType);
-            await downloadResponse.Value.Content.CopyToAsync(response.Body);
+            response.Headers.Add("Content-Type", "text/plain");
+            await downloadResponse.CopyToAsync(response.Body);
             return response;
         }
 
@@ -106,17 +92,13 @@ namespace BlobProcessor.API
         [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "blobs/{blobName}")] HttpRequestData req,
         string blobName)
         {
-            var blobClient = _blobContainer.GetBlobClient(blobName);
-
-            if (!await blobClient.ExistsAsync())
+            if (!await _blobProcessorService.BlobExistsAsync(blobName))
             {
-                var notFoundResponse = req.CreateResponse(HttpStatusCode.NotFound);
-                await notFoundResponse.WriteStringAsync($"Blob {blobName} not found.");
-                return notFoundResponse;
+                return req.CreateResponse(HttpStatusCode.NotFound);
             }
 
             using var stream = req.Body;
-            await blobClient.UploadAsync(stream, overwrite: true);
+            await _blobProcessorService.UploadBlobAsync(blobName, stream);
 
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteStringAsync($"Blob {blobName} updated successfully.");
@@ -128,16 +110,12 @@ namespace BlobProcessor.API
         [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "blobs/{blobName}")] HttpRequestData req,
         string blobName)
         {
-            var blobClient = _blobContainer.GetBlobClient(blobName);
-
-            if (!(await blobClient.ExistsAsync()))
+            if (!await _blobProcessorService.BlobExistsAsync(blobName))
             {
-                var notFoundResponse = req.CreateResponse(HttpStatusCode.NotFound);
-                await notFoundResponse.WriteStringAsync($"Blob {blobName} not found.");
-                return notFoundResponse;
+                return req.CreateResponse(HttpStatusCode.NotFound);
             }
 
-            await blobClient.DeleteAsync();
+            await _blobProcessorService.DeleteBlobAsync(blobName);
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteStringAsync($"Blob {blobName} deleted successfully.");
             return response;
@@ -147,20 +125,22 @@ namespace BlobProcessor.API
         public async Task<HttpResponseData> GenerateSasToken(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "blobs/{blobName}/sas")] HttpRequestData req, string blobName)
         {
-            var blobClient = _blobContainer.GetBlobClient(blobName);
-            if (!blobClient.Exists()) return req.CreateResponse(System.Net.HttpStatusCode.NotFound);
-
-            var sasBuilder = new BlobSasBuilder
+            if (!await _blobProcessorService.BlobExistsAsync(blobName))
             {
-                BlobContainerName = _containerName,
-                BlobName = blobName,
-                Resource = "b",
-                ExpiresOn = DateTimeOffset.UtcNow.AddHours(1)
-            };
-            sasBuilder.SetPermissions(BlobSasPermissions.Read);
+                return req.CreateResponse(HttpStatusCode.NotFound);
+            }
+
+            string sasUri = await _blobProcessorService.GenerateSasToken(blobName);
+
+            if (string.IsNullOrEmpty(sasUri))
+            {
+                var notFoundResponse = req.CreateResponse(HttpStatusCode.NotFound);
+                await notFoundResponse.WriteStringAsync($"Blob {blobName} not found.");
+                return notFoundResponse;
+            }
 
             var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteStringAsync(blobClient.GenerateSasUri(sasBuilder).ToString());
+            await response.WriteStringAsync(sasUri);
             return response;
         }
     }
